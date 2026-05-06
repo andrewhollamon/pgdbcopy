@@ -270,6 +270,48 @@ WHERE schemaname = '${SCHEMA}'
     ok "Backup table dropped."
   fi
 
+  # Drop indexes (including primary key) from current local table before rename
+  LOCAL_TABLE_PRE=$(run_local -tAc \
+    "SELECT 1 FROM information_schema.tables
+     WHERE table_schema = '${SCHEMA}' AND table_name = '${TABLE}';" 2>/dev/null || true)
+
+  if [[ "$LOCAL_TABLE_PRE" == "1" ]]; then
+    info "Dropping indexes from '${SCHEMA}.${TABLE}' before rename …"
+
+    # Drop constraint-backed indexes (PRIMARY KEY, UNIQUE) via ALTER TABLE DROP CONSTRAINT
+    CONSTRAINTS_TO_DROP=$(run_local -tAc "
+SELECT constraint_name
+FROM information_schema.table_constraints
+WHERE table_schema   = '${SCHEMA}'
+  AND table_name     = '${TABLE}'
+  AND constraint_type IN ('PRIMARY KEY', 'UNIQUE');" 2>/dev/null || true)
+
+    while IFS= read -r con; do
+      [[ -z "$con" ]] && continue
+      run_local -c "ALTER TABLE \"${SCHEMA}\".\"${TABLE}\" DROP CONSTRAINT \"${con}\";"
+      ok "Constraint '${con}' dropped."
+    done <<< "$CONSTRAINTS_TO_DROP"
+
+    # Drop remaining standalone (non-constraint) indexes
+    INDEXES_TO_DROP=$(run_local -tAc "
+SELECT indexname
+FROM pg_indexes
+WHERE schemaname = '${SCHEMA}'
+  AND tablename  = '${TABLE}'
+  AND indexname NOT IN (
+      SELECT constraint_name
+      FROM information_schema.table_constraints
+      WHERE table_schema = '${SCHEMA}'
+        AND table_name   = '${TABLE}'
+  );" 2>/dev/null || true)
+
+    while IFS= read -r idx; do
+      [[ -z "$idx" ]] && continue
+      run_local -c "DROP INDEX \"${SCHEMA}\".\"${idx}\";"
+      ok "Index '${idx}' dropped."
+    done <<< "$INDEXES_TO_DROP"
+  fi
+
   # Rename current local table to backup (if it exists)
   LOCAL_TABLE_EXISTS=$(run_local -tAc \
     "SELECT 1 FROM information_schema.tables
