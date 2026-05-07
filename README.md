@@ -1,16 +1,36 @@
 # POSTGRESQL DB COPY TOOL
 
-Much of the work I do involves querying, exploring, and modifying data in a postgres db in AWS by my employer.
+## USAGE
 
-There is one big challenge though with these databases, we dont have any personal schemas, or any other way to create temp tables that are persistent beyond the session, and can be accessed with tools like DataGrip, etc.
+```
+./pgdbcopy.sh --dsn YOURDB.rds.amazonaws.com:5432/YOURDB --user YOURUSERNAME --pass YOURPASSWORD --schema YOURSCHEMA --tables TABLE1 TABLE2 TABLE3 ...
+```
 
-So one alternative which we use is to stand up a local postgres db on the local machine, copy the tables over, and do exploratory work there, where I have privs to create temp tables and do whatever I want.
+Where all the capitalized words should be replaced with your values.
+
+## CAUTION
+
+This does NOT handle referential integrity at this time.
+
+The tables will be created in the local DB without any referential integrity.
+
+This is to avoid the complexity of coding for a potentially cyclic graph of relationships. If you need that in your local database, you'd need to find a more complex tool.
+
+## OVERVIEW
+
+I often need to work with reference data in PostgreSQL DB in AWS.
+
+There is one challenge though with these remote AWS databases, we dont have any personal schemas, or any other way to create temp tables that are persistent beyond the session, and can be accessed with tools like DataGrip, etc.
+
+So one alternative which is to stand up a local postgres db on the local machine, copy the tables over, and do exploratory work there, where I have privs to create temp tables and do whatever I want.
 
 But this is a pain to do each time to make sure I have current data.
 
 This tool automates this process.
 
-It connects to the remote DB, creates CREATE TABLE scripts with PKs, Constraints and Indexes.
+It connects to the remote DB, creates CREATE TABLE scripts with PKs, Constraints and Indexes. 
+
+It does NOT copy over referential integrity relationships.
 
 It then dumps the table contents to a CSV on the local laptop.
 
@@ -22,4 +42,4 @@ And then re-creates the table via SQL scripts (in case the structure has changed
 
 This turns a 10-15 minute manual process, into a 90 second one-shot script run.
 
-Note that this was mostly developed by Claude Code, with a number of hand edits by myself where it got things wrong.
+Note that this was started by Claude Code, with a number of hand edits by myself where it got things wrong.
