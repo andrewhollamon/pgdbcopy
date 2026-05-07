@@ -8,6 +8,8 @@
 
 Where all the capitalized words should be replaced with your values.
 
+WARNING: This script assumes your local postgresql db is running without authentication turned on, ie no user/pass. Make sure you've got it limited to localhost connections only! (`listen_addresses = 'localhost'` should be uncommented in your `postgresql.conf`)
+
 WARNING: You'll need to have created the local schemas yourself, this script will not create a schema, it expects it to be created already.
 
 ## CAUTION
