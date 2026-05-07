@@ -8,6 +8,8 @@
 
 Where all the capitalized words should be replaced with your values.
 
+WARNING: You'll need to have created the local schemas yourself, this script will not create a schema, it expects it to be created already.
+
 ## CAUTION
 
 This does NOT handle referential integrity at this time.
