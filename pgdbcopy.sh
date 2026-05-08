@@ -6,7 +6,9 @@
 
 set -euo pipefail
 
-EXPORT_DIR="/Users/drew/dev/scripts/dbcopy/exports"
+SCRIPT_DIR="${0:A:h}"
+EXPORT_DIR="${SCRIPT_DIR}/exports"
+
 LOCAL_HOST="localhost"
 LOCAL_PORT="5432"
 
@@ -16,19 +18,23 @@ LOCAL_PORT="5432"
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") --dsn <remote_dsn> --user <user> --pass <pass> --schema <schema> --tables <table1> [table2 ...]
+Usage: $(basename "$0") --dsn <remote_dsn> --ruser <remote_user> --rpass <remote_pass> --luser <local_user> --lpass <local_pass> --schema <schema> --tables <table1> [table2 ...]
 
 Arguments:
   --dsn       Remote PostgreSQL connection string (e.g. myhost.example.com:5432/mydb)
               Accepts host:port/db
-  --user      Remote DB username
-  --pass      Remote DB password
+  --ruser     Remote DB username
+  --rpass     Remote DB password
+  --luser     Local DB username
+  --lpass     Local DB password
   --schema    Schema name (used on both remote and local DBs)
   --tables    One or more table names to copy (space-separated, must come last
               OR be repeated: --tables t1 --tables t2)
 
 Example:
-  $(basename "$0") --dsn db.example.com:5432/mydb --user admin --pass secret \\
+  $(basename "$0") --dsn db.example.com:5432/mydb \\
+                   --ruser remoteuser --rpass remotepass \\
+                   --luser mylocaladmin --lpass mylocalpass \\
                    --schema public --tables orders customers
 EOF
   exit 1
@@ -38,14 +44,18 @@ EOF
 REMOTE_DSN=""
 REMOTE_USER=""
 REMOTE_PASS=""
+LOCAL_USER=""
+LOCAL_PASS=""
 SCHEMA=""
 TABLES=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dsn)    REMOTE_DSN="$2";  shift 2 ;;
-    --user)   REMOTE_USER="$2"; shift 2 ;;
-    --pass)   REMOTE_PASS="$2"; shift 2 ;;
+    --ruser)  REMOTE_USER="$2"; shift 2 ;;
+    --rpass)  REMOTE_PASS="$2"; shift 2 ;;
+    --luser)  LOCAL_USER="$2";  shift 2 ;;
+    --lpass)  LOCAL_PASS="$2";  shift 2 ;;
     --schema) SCHEMA="$2";      shift 2 ;;
     --tables)
       shift
@@ -59,7 +69,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ -z "$REMOTE_DSN" || -z "$REMOTE_USER" || -z "$REMOTE_PASS" || -z "$SCHEMA" || ${#TABLES[@]} -eq 0 ]] && usage
+[[ -z "$REMOTE_DSN" || -z "$REMOTE_USER" || -z "$REMOTE_PASS" || -z "$LOCAL_USER" || -z "$LOCAL_PASS"|| -z "$SCHEMA" || ${#TABLES[@]} -eq 0 ]] && usage
 
 # -----------------------------------------------------------------------------
 # Build connection strings
@@ -72,18 +82,17 @@ REMOTE_PORT_PART="${REMOTE_HOST##*:}"
 REMOTE_HOST_ONLY="${REMOTE_HOST%%:*}"
 if [[ "$REMOTE_HOST_ONLY" == "$REMOTE_PORT_PART" ]]; then
   # No port specified
-  REMOTE_DSN="postgresql://${REMOTE_USER}:${REMOTE_PASS}@${REMOTE_HOST_ONLY}/${REMOTE_DB}"
+  REMOTE_DSN="postgresql://${REMOTE_USER}:${REMOTE_PASS}@${REMOTE_HOST_ONLY}/${REMOTE_DB}?sslmode=require"
 else
-  REMOTE_DSN="postgresql://${REMOTE_USER}:${REMOTE_PASS}@${REMOTE_HOST_ONLY}:${REMOTE_PORT_PART}/${REMOTE_DB}"
+  REMOTE_DSN="postgresql://${REMOTE_USER}:${REMOTE_PASS}@${REMOTE_HOST_ONLY}:${REMOTE_PORT_PART}/${REMOTE_DB}?sslmode=require"
 fi
 
-LOCAL_DSN="postgresql://${LOCAL_HOST}:${LOCAL_PORT}/${REMOTE_DB}"
-
-# Export password so psql / pg_dump pick it up without a prompt
-export PGPASSWORD="$REMOTE_PASS"
+LOCAL_DSN="postgresql://${LOCAL_USER}:${LOCAL_PASS}@${LOCAL_HOST}:${LOCAL_PORT}/${REMOTE_DB}"
 
 # Convenience wrappers
-run_local() { psql --no-password -d "$LOCAL_DSN" "$@"; }
+# run_local() { psql --no-password -d "$LOCAL_DSN" "$@"; } 
+# the above line is the syntax for no-password connection if we ever need that back on
+run_local() { psql -d "$LOCAL_DSN" "$@"; }
 run_remote() { psql -d "$REMOTE_DSN" "$@"; }
 
 # -----------------------------------------------------------------------------
@@ -114,7 +123,7 @@ ok "Local DB connection successful."
 
 info "Checking for schema '${SCHEMA}' in local DB …"
 LOCAL_SCHEMA_EXISTS=$(run_local -tAc \
-  "SELECT 1 FROM information_schema.schemata WHERE schema_name = '${SCHEMA}';" 2>/dev/null || true)
+  "SELECT 1 FROM information_schema.schemata WHERE schema_name = '${SCHEMA}';")
 if [[ "$LOCAL_SCHEMA_EXISTS" != "1" ]]; then
   abort "Schema '${SCHEMA}' does not exist in the local DB. Create it first."
 fi
@@ -124,7 +133,7 @@ ok "Schema '${SCHEMA}' found in local DB."
 # STEP 2 — Remote DB connectivity + schema check
 # =============================================================================
 
-info "Connecting to remote DB at ${REMOTE_DSN}"
+info "Connecting to remote DB at ${REMOTE_USER}:********@${REMOTE_HOST_ONLY}:${REMOTE_PORT_PART}/${REMOTE_DB}?sslmode=require"
 if ! run_remote -c '\q' &>/dev/null; then
   abort "Cannot connect to remote PostgreSQL. Check --dsn, --user, and --pass."
 fi
@@ -132,7 +141,7 @@ ok "Remote DB connection successful."
 
 info "Checking for schema '${SCHEMA}' in remote DB …"
 REMOTE_SCHEMA_EXISTS=$(run_remote -tAc \
-  "SELECT 1 FROM information_schema.schemata WHERE schema_name = '${SCHEMA}';" 2>/dev/null || true)
+  "SELECT 1 FROM information_schema.schemata WHERE schema_name = '${SCHEMA}';")
 if [[ "$REMOTE_SCHEMA_EXISTS" != "1" ]]; then
   abort "Schema '${SCHEMA}' does not exist in the remote DB."
 fi
@@ -157,7 +166,7 @@ for TABLE in "${TABLES[@]}"; do
 
   TABLE_EXISTS=$(run_remote -tAc \
     "SELECT 1 FROM information_schema.tables
-     WHERE table_schema = '${SCHEMA}' AND table_name = '${TABLE}';" 2>/dev/null || true)
+     WHERE table_schema = '${SCHEMA}' AND table_name = '${TABLE}';")
 
   if [[ "$TABLE_EXISTS" != "1" ]]; then
     error "Table '${SCHEMA}.${TABLE}' not found on remote DB — skipping."
@@ -227,7 +236,7 @@ WHERE schemaname = '${SCHEMA}'
       AND table_schema    = '${SCHEMA}'
       AND table_name      = '${TABLE}'
   );
-" 2>/dev/null || true)
+")
 
   # Write the SQL file
   {
@@ -263,7 +272,7 @@ WHERE schemaname = '${SCHEMA}'
   # Drop stale backup if present
   BACKUP_EXISTS=$(run_local -tAc \
     "SELECT 1 FROM information_schema.tables
-     WHERE table_schema = '${SCHEMA}' AND table_name = '${BACKUP_TABLE}';" 2>/dev/null || true)
+     WHERE table_schema = '${SCHEMA}' AND table_name = '${BACKUP_TABLE}';")
   if [[ "$BACKUP_EXISTS" == "1" ]]; then
     info "Dropping existing backup table '${SCHEMA}.${BACKUP_TABLE}' …"
     run_local -c "DROP TABLE \"${SCHEMA}\".\"${BACKUP_TABLE}\";"
@@ -273,7 +282,7 @@ WHERE schemaname = '${SCHEMA}'
   # Drop indexes (including primary key) from current local table before rename
   LOCAL_TABLE_PRE=$(run_local -tAc \
     "SELECT 1 FROM information_schema.tables
-     WHERE table_schema = '${SCHEMA}' AND table_name = '${TABLE}';" 2>/dev/null || true)
+     WHERE table_schema = '${SCHEMA}' AND table_name = '${TABLE}';")
 
   if [[ "$LOCAL_TABLE_PRE" == "1" ]]; then
     info "Dropping indexes from '${SCHEMA}.${TABLE}' before rename …"
@@ -284,7 +293,7 @@ SELECT constraint_name
 FROM information_schema.table_constraints
 WHERE table_schema   = '${SCHEMA}'
   AND table_name     = '${TABLE}'
-  AND constraint_type IN ('PRIMARY KEY', 'UNIQUE');" 2>/dev/null || true)
+  AND constraint_type IN ('PRIMARY KEY', 'UNIQUE');")
 
     while IFS= read -r con; do
       [[ -z "$con" ]] && continue
@@ -303,7 +312,7 @@ WHERE schemaname = '${SCHEMA}'
       FROM information_schema.table_constraints
       WHERE table_schema = '${SCHEMA}'
         AND table_name   = '${TABLE}'
-  );" 2>/dev/null || true)
+  );")
 
     while IFS= read -r idx; do
       [[ -z "$idx" ]] && continue
@@ -315,7 +324,7 @@ WHERE schemaname = '${SCHEMA}'
   # Rename current local table to backup (if it exists)
   LOCAL_TABLE_EXISTS=$(run_local -tAc \
     "SELECT 1 FROM information_schema.tables
-     WHERE table_schema = '${SCHEMA}' AND table_name = '${TABLE}';" 2>/dev/null || true)
+     WHERE table_schema = '${SCHEMA}' AND table_name = '${TABLE}';")
   if [[ "$LOCAL_TABLE_EXISTS" == "1" ]]; then
     info "Renaming local '${SCHEMA}.${TABLE}' → '${SCHEMA}.${BACKUP_TABLE}' …"
     run_local -c "ALTER TABLE \"${SCHEMA}\".\"${TABLE}\" RENAME TO \"${BACKUP_TABLE}\";"
@@ -334,6 +343,9 @@ WHERE schemaname = '${SCHEMA}'
   run_local -c "\COPY \"${SCHEMA}\".\"${TABLE}\" FROM '${CSV_FILE}' WITH (FORMAT CSV, HEADER true, NULL '');"
   ok "Data loaded successfully into '${SCHEMA}.${TABLE}'."
 
+  # Minor security improvement, make all the exported CSV files with possibly prod data only accessible by the owner
+  chmod 700 ${EXPORT_DIR}
+  chmod 600 ${EXPORT_DIR}/*
 done
 
 print ""

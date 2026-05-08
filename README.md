@@ -3,22 +3,33 @@
 ## USAGE
 
 ```
-./pgdbcopy.sh --dsn YOURDB.rds.amazonaws.com:5432/YOURDB --user YOURUSERNAME --pass YOURPASSWORD --schema YOURSCHEMA --tables TABLE1 TABLE2 TABLE3 ...
+./pgdbcopy.sh --dsn YOURDB.rds.amazonaws.com:5432/YOURDB --ruser REMOTEUSER --rpass REMOTEPASSWORD --luser LOCALUSER --lpass LOCALPASS --schema YOURSCHEMA --tables TABLE1 TABLE2 TABLE3 ...
 ```
 
 Where all the capitalized words should be replaced with your values.
 
-WARNING: This script assumes your local postgresql db is running without authentication turned on, ie no user/pass. Make sure you've got it limited to localhost connections only! (`listen_addresses = 'localhost'` should be uncommented in your `postgresql.conf`)
+## WARNINGS AND ASSUMPTIONS
+- This script currently will leave actual passwords passed into the command line in plaintext in `ps aux` or `/proc/<pid>/cmdline` while the script is running. It will also leave these passwords in plaintext in your shell history. Next update to this software will move the user/passwords into a `.pgpass` file.
+- If you're running your local postgresdb in "no authentication" mode, then this script won't be able to connect. Even with `listen_addresses = 'localhost'` uncommented in your `postgresql.conf`, there's a vulnerability in that any locally running script, program, application, or malware will be able to connect and query data. This is too high of a risk for my current environment.
+- You'll need to have created the local schemas yourself, this script will not create a schema, it expects it to be created already.
+- This does NOT handle referential integrity at this time. The tables will be created in the local DB without any referential integrity. This is to avoid the complexity of coding for a potentially cyclic graph of relationships. If you need that in your local database, you'd need to find a more complex tool.
 
-WARNING: You'll need to have created the local schemas yourself, this script will not create a schema, it expects it to be created already.
+### SETTING UP LOCAL PASSWORD
 
-## CAUTION
+There are many online resources to assist with this, but the general set of tasks is:
 
-This does NOT handle referential integrity at this time.
-
-The tables will be created in the local DB without any referential integrity.
-
-This is to avoid the complexity of coding for a potentially cyclic graph of relationships. If you need that in your local database, you'd need to find a more complex tool.
+- Make sure your `postgresql.conf` file has `listen_addresses = 'localhost'` uncommented and active
+- Modify your `pg_hba.conf` file with the following lines, replace `trust` with `scram-sha-256`
+    - `local   all             all                                     trust`
+    - `host    all             all             127.0.0.1/32            trust`
+    - `host    all             all             ::1/128                 trust`
+    - Each value of `trust` above should be replaced with `scram-sha-256`
+- Do NOT restart your local postgres yet
+- Run this with psql or your db tool:
+    - `ALTER USER your_username WITH PASSWORD 'your_password';`
+    - make sure this completes successfully before going on 
+- Restart postgresql with `brew services restart postgresql@18` or whatever means you normally use (and with the correct postgresql version number)
+- Update the connection strings in your DB tool with `your_password` from above
 
 ## OVERVIEW
 
