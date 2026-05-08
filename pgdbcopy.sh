@@ -18,23 +18,28 @@ LOCAL_PORT="5432"
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") --dsn <remote_dsn> --ruser <remote_user> --rpass <remote_pass> --luser <local_user> --lpass <local_pass> --schema <schema> --tables <table1> [table2 ...]
+Usage: $(basename "$0") --dsn <remote_dsn> --ruser <remote_user> [--rpass <remote_pass>] --luser <local_user> [--lpass <local_pass>] --schema <schema> --tables <table1> [table2 ...]
 
 Arguments:
   --dsn       Remote PostgreSQL connection string (e.g. myhost.example.com:5432/mydb)
               Accepts host:port/db
   --ruser     Remote DB username
-  --rpass     Remote DB password
+  --rpass     Remote DB password (optional)
   --luser     Local DB username
-  --lpass     Local DB password
+  --lpass     Local DB password (optional)
   --schema    Schema name (used on both remote and local DBs)
   --tables    One or more table names to copy (space-separated, must come last
               OR be repeated: --tables t1 --tables t2)
 
-Example:
+Example (using ~/.pgpass for credentials):
+  $(basename "$0") --dsn db.example.com:5432/mydb --ruser remoteusername --luser localusername --schema public --tables orders customers
+(Using ~/.pgpass for your credentials is strongly preferred, so that credentials dont end up in your shell history files)
+(https://www.postgresql.org/docs/current/libpq-pgpass.html)
+
+Example (using credentials in the command line parameters):
   $(basename "$0") --dsn db.example.com:5432/mydb \\
                    --ruser remoteuser --rpass remotepass \\
-                   --luser mylocaladmin --lpass mylocalpass \\
+                   --luser localusername --lpass localpass \\
                    --schema public --tables orders customers
 EOF
   exit 1
@@ -69,7 +74,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ -z "$REMOTE_DSN" || -z "$REMOTE_USER" || -z "$REMOTE_PASS" || -z "$LOCAL_USER" || -z "$LOCAL_PASS"|| -z "$SCHEMA" || ${#TABLES[@]} -eq 0 ]] && usage
+[[ -z "$REMOTE_DSN" || -z "$REMOTE_USER" || -z "$LOCAL_USER" || -z "$SCHEMA" || ${#TABLES[@]} -eq 0 ]] && usage
 
 # -----------------------------------------------------------------------------
 # Build connection strings
@@ -82,12 +87,12 @@ REMOTE_PORT_PART="${REMOTE_HOST##*:}"
 REMOTE_HOST_ONLY="${REMOTE_HOST%%:*}"
 if [[ "$REMOTE_HOST_ONLY" == "$REMOTE_PORT_PART" ]]; then
   # No port specified
-  REMOTE_DSN="postgresql://${REMOTE_USER}:${REMOTE_PASS}@${REMOTE_HOST_ONLY}/${REMOTE_DB}?sslmode=require"
+  REMOTE_DSN="postgresql://${REMOTE_USER}@${REMOTE_HOST_ONLY}/${REMOTE_DB}?sslmode=require"
 else
-  REMOTE_DSN="postgresql://${REMOTE_USER}:${REMOTE_PASS}@${REMOTE_HOST_ONLY}:${REMOTE_PORT_PART}/${REMOTE_DB}?sslmode=require"
+  REMOTE_DSN="postgresql://${REMOTE_USER}@${REMOTE_HOST_ONLY}:${REMOTE_PORT_PART}/${REMOTE_DB}?sslmode=require"
 fi
 
-LOCAL_DSN="postgresql://${LOCAL_USER}:${LOCAL_PASS}@${LOCAL_HOST}:${LOCAL_PORT}/${REMOTE_DB}"
+LOCAL_DSN="postgresql://${LOCAL_USER}@${LOCAL_HOST}:${LOCAL_PORT}/${REMOTE_DB}"
 
 # Convenience wrappers
 # run_local() { psql --no-password -d "$LOCAL_DSN" "$@"; } 
@@ -117,7 +122,7 @@ mkdir -p "$EXPORT_DIR"
 
 info "Connecting to local DB at ${LOCAL_HOST}:${LOCAL_PORT} …"
 if ! run_local -c '\q' &>/dev/null; then
-  abort "Cannot connect to local PostgreSQL at ${LOCAL_HOST}:${LOCAL_PORT}. Is it running?"
+  abort "Cannot connect to local PostgreSQL at ${LOCAL_HOST}:${LOCAL_PORT}. Is it running? Also check --dsn, ~/.pgpass or --luser and --lpass."
 fi
 ok "Local DB connection successful."
 
@@ -133,9 +138,9 @@ ok "Schema '${SCHEMA}' found in local DB."
 # STEP 2 — Remote DB connectivity + schema check
 # =============================================================================
 
-info "Connecting to remote DB at ${REMOTE_USER}:********@${REMOTE_HOST_ONLY}:${REMOTE_PORT_PART}/${REMOTE_DB}?sslmode=require"
+info "Connecting to remote DB at ${REMOTE_HOST_ONLY}:${REMOTE_PORT_PART}/${REMOTE_DB}?sslmode=require"
 if ! run_remote -c '\q' &>/dev/null; then
-  abort "Cannot connect to remote PostgreSQL. Check --dsn, --user, and --pass."
+  abort "Cannot connect to remote PostgreSQL. Check --dsn, ~/.pgpass or --ruser and --rpass."
 fi
 ok "Remote DB connection successful."
 

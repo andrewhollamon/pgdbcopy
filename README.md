@@ -3,13 +3,14 @@
 ## USAGE
 
 ```
-./pgdbcopy.sh --dsn YOURDB.rds.amazonaws.com:5432/YOURDB --ruser REMOTEUSER --rpass REMOTEPASSWORD --luser LOCALUSER --lpass LOCALPASS --schema YOURSCHEMA --tables TABLE1 TABLE2 TABLE3 ...
+./pgdbcopy.sh --dsn YOURDB.rds.amazonaws.com:5432/YOURDB --ruser REMOTEUSER [--rpass REMOTEPASSWORD] --luser LOCALUSER [--lpass LOCALPASS] --schema YOURSCHEMA --tables TABLE1 TABLE2 TABLE3 ...
 ```
-
 Where all the capitalized words should be replaced with your values.
 
+**NOTE:** If you omit the passwords (--lpass and --rpass) then the system will be dependent on having a properly configured `~/.pgpass` setup. See [https://www.postgresql.org/docs/current/libpq-pgpass.html](https://www.postgresql.org/docs/current/libpq-pgpass.html) on how to configure. This is a much more secure approach since it wont leave cleartext passwords in your shell history files.
+
 ## WARNINGS AND ASSUMPTIONS
-- This script currently will leave actual passwords passed into the command line in plaintext in `ps aux` or `/proc/<pid>/cmdline` while the script is running. It will also leave these passwords in plaintext in your shell history. Next update to this software will move the user/passwords into a `.pgpass` file.
+
 - If you're running your local postgresdb in "no authentication" mode, then this script won't be able to connect. Even with `listen_addresses = 'localhost'` uncommented in your `postgresql.conf`, there's a vulnerability in that any locally running script, program, application, or malware will be able to connect and query data. This is too high of a risk for my current environment.
 - You'll need to have created the local schemas yourself, this script will not create a schema, it expects it to be created already.
 - This does NOT handle referential integrity at this time. The tables will be created in the local DB without any referential integrity. This is to avoid the complexity of coding for a potentially cyclic graph of relationships. If you need that in your local database, you'd need to find a more complex tool.
